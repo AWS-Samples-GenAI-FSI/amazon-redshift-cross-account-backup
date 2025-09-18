@@ -25,7 +25,7 @@ aca-redshift-backup-demo/
 ├── .gitignore                       # Git ignore patterns
 ├── CHANGELOG.md                     # Version history and changes
 ├── CONTRIBUTING.md                  # Contribution guidelines
-├── LICENSE                          # MIT license
+├── LICENSE                          # Apache 2.0 license
 ├── PROJECT_STRUCTURE.md             # This file
 ├── README.md                        # Main project documentation
 ├── cleanup.sh                       # Resource cleanup automation
@@ -182,7 +182,7 @@ aca-redshift-backup-demo/
 - **Patterns**: AWS credentials, logs, temporary files, IDE files, OS files
 
 #### `LICENSE`
-- **Purpose**: MIT license for open source distribution
+- **Purpose**: Apache 2.0 license for open source distribution
 - **Permissions**: Commercial use, modification, distribution, private use
 
 ### GitHub Configuration
