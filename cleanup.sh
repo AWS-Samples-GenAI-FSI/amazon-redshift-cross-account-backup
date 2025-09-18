@@ -26,6 +26,18 @@ safe_aws_command() {
     return 1
 }
 
+# Function to get target account ID
+get_target_account_id() {
+    # Try to get from target profile
+    local target_account=$(aws sts get-caller-identity --query 'Account' --output text --profile target 2>/dev/null || echo "")
+    if [[ -n "$target_account" ]]; then
+        echo "$target_account"
+    else
+        # Fallback to hardcoded value
+        echo "058264155998"
+    fi
+}
+
 echo "=== ACA Redshift Demo Cleanup ==="
 echo "⚠️  This will delete all demo resources and cannot be undone!"
 echo
@@ -60,7 +72,34 @@ done
 # Step 2: Delete manual snapshots (including cross-account shared ones)
 echo "=== Step 2: Deleting manual snapshots ==="
 
-# Delete snapshots from source account
+# First, revoke cross-account access for shared snapshots
+echo "Revoking cross-account access for shared snapshots..."
+SHARED_SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
+    --snapshot-type manual \
+    --query 'Snapshots[?starts_with(SnapshotIdentifier, `demo-snapshot`) || starts_with(SnapshotIdentifier, `copied-`)].SnapshotIdentifier' \
+    --output text \
+    --region us-east-1 \
+    --profile source 2>/dev/null || echo "")
+
+for snapshot in $SHARED_SNAPSHOTS; do
+    if [[ -n "$snapshot" && "$snapshot" != "None" ]]; then
+        echo "Revoking cross-account access for snapshot: $snapshot"
+        # Get target account ID dynamically
+        local target_account=$(get_target_account_id)
+        # Try to revoke access - this might fail if not shared, which is OK
+        aws redshift revoke-snapshot-access \
+            --snapshot-identifier "$snapshot" \
+            --account-with-restore-access "$target_account" \
+            --region us-east-1 \
+            --profile source 2>/dev/null || echo "  (No cross-account access to revoke or already revoked)"
+    fi
+done
+
+# Wait a moment for revocation to take effect
+echo "Waiting for access revocation to take effect..."
+sleep 10
+
+# Now delete snapshots from source account
 echo "Deleting snapshots from source account..."
 SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
     --snapshot-type manual \
@@ -76,21 +115,8 @@ for snapshot in $SNAPSHOTS; do
     fi
 done
 
-# Delete snapshots from target account
-echo "Deleting snapshots from target account..."
-TARGET_SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
-    --snapshot-type manual \
-    --query 'Snapshots[?starts_with(SnapshotIdentifier, `demo-snapshot`) || starts_with(SnapshotIdentifier, `copied-`)].SnapshotIdentifier' \
-    --output text \
-    --region us-east-1 \
-    --profile target 2>/dev/null || echo "")
-
-for snapshot in $TARGET_SNAPSHOTS; do
-    if [[ -n "$snapshot" && "$snapshot" != "None" ]]; then
-        echo "Deleting target snapshot: $snapshot"
-        safe_aws_command "aws redshift delete-cluster-snapshot --snapshot-identifier $snapshot --region us-east-1 --profile target"
-    fi
-done
+# Note: We don't need to delete from target account since shared snapshots are owned by source
+echo "Note: Shared snapshots are owned by source account and deleted above"
 
 # Step 3: Clean up AWS Backup resources (order matters!)
 echo "=== Step 3: Cleaning up AWS Backup resources ==="
