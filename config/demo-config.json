@@ -1,0 +1,25 @@
+{
+  "demo_configuration": {
+    "resource_prefix": "fsi-redshift",
+    "source_account_id": "111111111111",
+    "target_account_id": "222222222222",
+    "aws_region": "us-east-1",
+    "cluster_configuration": {
+      "cluster_identifier": "fsi-redshift-cluster",
+      "node_type": "ra3.xlplus",
+      "cluster_type": "single-node",
+      "database_name": "fsidata",
+      "master_username": "demouser"
+    },
+    "backup_configuration": {
+      "retention_days": 7,
+      "backup_schedule": "cron(0 2 * * ? *)",
+      "notification_email": ""
+    },
+    "tags": {
+      "Environment": "Demo",
+      "Purpose": "FSI-CrossAccountBackup",
+      "Owner": "AWS-Sample"
+    }
+  }
+}

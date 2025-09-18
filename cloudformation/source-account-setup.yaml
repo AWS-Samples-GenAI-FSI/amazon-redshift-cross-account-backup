@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ACA source account setup for Redshift cross-account snapshot demo'
+
+Parameters:
+  TargetAccountId:
+    Type: String
+    Description: Target AWS account ID for snapshot sharing
+    AllowedPattern: '[0-9]{12}'
+  
+  RedshiftMasterUsername:
+    Type: String
+    Default: demouser
+    Description: Master username for Redshift cluster
+  
+  RedshiftMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Master password for Redshift cluster
+
+Resources:
+  # VPC and Networking
+  AcaVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: aca-redshift-vpc
+
+  AcaSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AcaVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: aca-redshift-subnet-1
+
+  AcaSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AcaVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: aca-redshift-subnet-2
+
+  # Redshift Subnet Group
+  AcaRedshiftSubnetGroup:
+    Type: AWS::Redshift::ClusterSubnetGroup
+    Properties:
+      Description: ACA subnet group for Redshift cluster
+      SubnetIds:
+        - !Ref AcaSubnet1
+        - !Ref AcaSubnet2
+      Tags:
+        - Key: Name
+          Value: aca-redshift-subnet-group
+
+  # KMS Key for encryption
+  AcaRedshiftKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: ACA KMS key for Redshift encryption
+      KeyPolicy:
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow target account access
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${TargetAccountId}:root'
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:ReEncrypt*
+            Resource: '*'
+          - Sid: Allow AWS Backup service
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:ReEncrypt*
+            Resource: '*'
+
+  AcaRedshiftKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/aca-redshift-key
+      TargetKeyId: !Ref AcaRedshiftKMSKey
+
+  # AWS Backup Service Role
+  AcaAWSBackupServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AcaAWSBackupServiceRole-Redshift
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+      Tags:
+        - Key: Name
+          Value: AcaAWSBackupServiceRole-Redshift
+
+  # AWS Backup Vault
+  AcaSourceBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: aca-redshift-vault
+      EncryptionKeyArn: !GetAtt AcaRedshiftKMSKey.Arn
+      BackupVaultTags:
+        Purpose: AcaRedshiftCrossAccountDemo
+        CreatedBy: CloudFormation
+
+  # AWS Backup Plan
+  AcaRedshiftBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: aca-redshift-plan
+        BackupPlanRule:
+          - RuleName: AcaRedshiftDailyBackup
+            TargetBackupVault: !Ref AcaSourceBackupVault
+            ScheduleExpression: cron(0 2 * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 30
+            RecoveryPointTags:
+              Purpose: AcaRedshiftDemo
+              AutomatedBackup: 'true'
+            CopyActions:
+              - DestinationBackupVaultArn: !Sub 'arn:aws:backup:${AWS::Region}:${TargetAccountId}:backup-vault:aca-redshift-cross-account-vault'
+                Lifecycle:
+                  DeleteAfterDays: 30
+      BackupPlanTags:
+        Purpose: AcaRedshiftCrossAccountDemo
+
+  # AWS Backup Selection
+  AcaRedshiftBackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref AcaRedshiftBackupPlan
+      BackupSelection:
+        SelectionName: AcaRedshiftClusterSelection
+        IamRoleArn: !GetAtt AcaAWSBackupServiceRole.Arn
+        Resources:
+          - !Sub 'arn:aws:redshift:${AWS::Region}:${AWS::AccountId}:cluster:${AcaRedshiftCluster}'
+
+  # Redshift Cluster
+  AcaRedshiftCluster:
+    Type: AWS::Redshift::Cluster
+    Properties:
+      ClusterIdentifier: aca-redshift-cluster
+      ClusterType: single-node
+      NodeType: ra3.xlplus
+      MasterUsername: !Ref RedshiftMasterUsername
+      MasterUserPassword: !Ref RedshiftMasterPassword
+      DBName: acadata
+      ClusterSubnetGroupName: !Ref AcaRedshiftSubnetGroup
+      Encrypted: true
+      KmsKeyId: !Ref AcaRedshiftKMSKey
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: aca-redshift-cluster
+
+Outputs:
+  ClusterIdentifier:
+    Description: ACA Redshift cluster identifier
+    Value: !Ref AcaRedshiftCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterIdentifier'
+  
+  ClusterArn:
+    Description: ACA Redshift cluster ARN
+    Value: !Sub 'arn:aws:redshift:${AWS::Region}:${AWS::AccountId}:cluster:${AcaRedshiftCluster}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterArn'
+  
+  KMSKeyId:
+    Description: ACA KMS Key ID for encryption
+    Value: !Ref AcaRedshiftKMSKey
+    Export:
+      Name: !Sub '${AWS::StackName}-KMSKeyId'
+  
+  VPCId:
+    Description: ACA VPC ID
+    Value: !Ref AcaVPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCId'
+  
+  BackupVaultName:
+    Description: ACA AWS Backup vault name
+    Value: !Ref AcaSourceBackupVault
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupVaultName'
+  
+  BackupVaultArn:
+    Description: ACA AWS Backup vault ARN
+    Value: !GetAtt AcaSourceBackupVault.BackupVaultArn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupVaultArn'
+  
+  BackupPlanId:
+    Description: ACA AWS Backup plan ID
+    Value: !Ref AcaRedshiftBackupPlan
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupPlanId'
+  
+  BackupRoleArn:
+    Description: ACA AWS Backup service role ARN
+    Value: !GetAtt AcaAWSBackupServiceRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupRoleArn'

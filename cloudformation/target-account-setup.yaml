@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ACA target account setup for Redshift cross-account snapshot demo'
+
+Parameters:
+  SourceAccountId:
+    Type: String
+    Description: Source AWS account ID
+    AllowedPattern: '[0-9]{12}'
+
+Resources:
+  # VPC and Networking for target account
+  AcaTargetVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: aca-redshift-target-vpc
+
+  AcaTargetSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AcaTargetVPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: aca-redshift-target-subnet-1
+
+  AcaTargetSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AcaTargetVPC
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: aca-redshift-target-subnet-2
+
+  # Redshift Subnet Group for target
+  AcaTargetRedshiftSubnetGroup:
+    Type: AWS::Redshift::ClusterSubnetGroup
+    Properties:
+      Description: ACA target subnet group for restored Redshift cluster
+      SubnetIds:
+        - !Ref AcaTargetSubnet1
+        - !Ref AcaTargetSubnet2
+      Tags:
+        - Key: Name
+          Value: aca-redshift-target-subnet-group
+
+  # AWS Backup Vault
+  AcaBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: aca-redshift-cross-account-vault
+      EncryptionKeyArn: !GetAtt AcaBackupKMSKey.Arn
+
+  # KMS Key for AWS Backup
+  AcaBackupKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: ACA KMS key for AWS Backup vault
+      KeyPolicy:
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow source account access
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${SourceAccountId}:root'
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:ReEncrypt*
+            Resource: '*'
+          - Sid: Allow AWS Backup service
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:ReEncrypt*
+            Resource: '*'
+
+  AcaBackupKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/aca-backup-key
+      TargetKeyId: !Ref AcaBackupKMSKey
+
+Outputs:
+  BackupVaultName:
+    Description: ACA AWS Backup vault name
+    Value: !Ref AcaBackupVault
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupVaultName'
+  
+  BackupVaultArn:
+    Description: ACA AWS Backup vault ARN
+    Value: !GetAtt AcaBackupVault.BackupVaultArn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupVaultArn'
+  
+  TargetSubnetGroupName:
+    Description: ACA target Redshift subnet group name
+    Value: !Ref AcaTargetRedshiftSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-TargetSubnetGroupName'

@@ -1,0 +1,358 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ACA Lambda-based Redshift backup solution with EventBridge scheduling'
+
+Parameters:
+  TargetAccountId:
+    Type: String
+    Description: Target AWS account ID for snapshot sharing
+    AllowedPattern: '[0-9]{12}'
+  
+  ClusterIdentifier:
+    Type: String
+    Default: aca-redshift-cluster
+    Description: Redshift cluster identifier to backup
+  
+  BackupSchedule:
+    Type: String
+    Default: 'rate(1 day)'
+    Description: EventBridge schedule expression (e.g., 'rate(1 day)', 'cron(0 2 * * ? *)')
+  
+  RetentionDays:
+    Type: Number
+    Default: 7
+    Description: Number of days to retain snapshots
+    MinValue: 1
+    MaxValue: 365
+  
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address for backup notifications (optional)
+    AllowedPattern: '^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+
+Resources:
+  # Lambda Execution Role
+  AcaLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AcaRedshiftBackupLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AcaRedshiftBackupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - redshift:CreateClusterSnapshot
+                  - redshift:DescribeClusterSnapshots
+                  - redshift:DeleteClusterSnapshot
+                  - redshift:AuthorizeSnapshotAccess
+                  - redshift:RevokeSnapshotAccess
+                  - redshift:DescribeClusters
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # Lambda Function
+  AcaRedshiftBackupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aca-redshift-backup
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt AcaLambdaExecutionRole.Arn
+      Timeout: 900  # 15 minutes
+      MemorySize: 512
+      Description: ACA Redshift cross-account backup automation
+      Environment:
+        Variables:
+          TARGET_ACCOUNT_ID: !Ref TargetAccountId
+          CLUSTER_IDENTIFIER: !Ref ClusterIdentifier
+          RETENTION_DAYS: !Ref RetentionDays
+      Code:
+        ZipFile: |
+          #!/usr/bin/env python3
+          """
+          ACA Redshift Lambda Backup Function
+          Serverless implementation of native Redshift snapshot sharing
+          """
+          
+          import json
+          import boto3
+          import time
+          import os
+          from datetime import datetime
+          from typing import Dict, Any
+          import logging
+          
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          class AcaRedshiftBackupLambda:
+              def __init__(self):
+                  """Initialize with Lambda execution role credentials"""
+                  self.source_redshift = boto3.client('redshift')
+                  
+                  # Get account info from STS
+                  sts = boto3.client('sts')
+                  identity = sts.get_caller_identity()
+                  self.source_account_id = identity['Account']
+                  
+                  logger.info(f"Lambda initialized for source account: {self.source_account_id}")
+          
+              def create_manual_snapshot(self, cluster_identifier: str, target_account_id: str) -> str:
+                  """Create a manual snapshot of the Redshift cluster"""
+                  timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                  snapshot_identifier = f"aca-lambda-snapshot-{timestamp}"
+                  
+                  logger.info(f"Creating manual snapshot: {snapshot_identifier}")
+                  
+                  try:
+                      response = self.source_redshift.create_cluster_snapshot(
+                          SnapshotIdentifier=snapshot_identifier,
+                          ClusterIdentifier=cluster_identifier,
+                          Tags=[
+                              {'Key': 'Purpose', 'Value': 'AcaCrossAccountBackup'},
+                              {'Key': 'CreatedBy', 'Value': 'AcaLambdaFunction'},
+                              {'Key': 'TargetAccount', 'Value': target_account_id},
+                              {'Key': 'Timestamp', 'Value': timestamp}
+                          ]
+                      )
+                      
+                      logger.info(f"Snapshot creation initiated: {snapshot_identifier}")
+                      return snapshot_identifier
+                      
+                  except Exception as e:
+                      logger.error(f"Error creating snapshot: {str(e)}")
+                      raise
+          
+              def share_snapshot_with_account(self, snapshot_identifier: str, target_account_id: str) -> bool:
+                  """Share snapshot with target account"""
+                  logger.info(f"Sharing snapshot {snapshot_identifier} with account {target_account_id}")
+                  
+                  try:
+                      response = self.source_redshift.authorize_snapshot_access(
+                          SnapshotIdentifier=snapshot_identifier,
+                          AccountWithRestoreAccess=target_account_id
+                      )
+                      
+                      logger.info("Snapshot shared successfully")
+                      return True
+                      
+                  except Exception as e:
+                      logger.error(f"Error sharing snapshot: {str(e)}")
+                      return False
+          
+              def cleanup_old_snapshots(self, cluster_identifier: str, retention_days: int = 7) -> int:
+                  """Clean up old snapshots based on retention policy"""
+                  logger.info(f"Cleaning up snapshots older than {retention_days} days")
+                  
+                  try:
+                      # Get all manual snapshots for this cluster
+                      response = self.source_redshift.describe_cluster_snapshots(
+                          ClusterIdentifier=cluster_identifier,
+                          SnapshotType='manual'
+                      )
+                      
+                      deleted_count = 0
+                      cutoff_time = datetime.now().timestamp() - (retention_days * 24 * 3600)
+                      
+                      for snapshot in response.get('Snapshots', []):
+                          snapshot_id = snapshot['SnapshotIdentifier']
+                          
+                          # Only delete our Lambda-created snapshots
+                          if snapshot_id.startswith('aca-lambda-snapshot-'):
+                              snapshot_time = snapshot['SnapshotCreateTime'].timestamp()
+                              
+                              if snapshot_time < cutoff_time:
+                                  logger.info(f"Deleting old snapshot: {snapshot_id}")
+                                  try:
+                                      self.source_redshift.delete_cluster_snapshot(
+                                          SnapshotIdentifier=snapshot_id
+                                      )
+                                      deleted_count += 1
+                                  except Exception as e:
+                                      logger.warning(f"Could not delete snapshot {snapshot_id}: {str(e)}")
+                      
+                      logger.info(f"Cleaned up {deleted_count} old snapshots")
+                      return deleted_count
+                      
+                  except Exception as e:
+                      logger.error(f"Error during cleanup: {str(e)}")
+                      return 0
+          
+          def lambda_handler(event, context):
+              """
+              Lambda handler for ACA Redshift backup
+              """
+              
+              logger.info(f"Lambda invoked with event: {json.dumps(event)}")
+              
+              try:
+                  # Get parameters from environment or event
+                  cluster_identifier = event.get('cluster_identifier') or os.environ.get('CLUSTER_IDENTIFIER', 'aca-redshift-cluster')
+                  target_account_id = event.get('target_account_id') or os.environ.get('TARGET_ACCOUNT_ID')
+                  retention_days = int(event.get('retention_days', os.environ.get('RETENTION_DAYS', 7)))
+                  
+                  if not target_account_id:
+                      raise ValueError("target_account_id is required")
+                  
+                  # Initialize backup handler
+                  backup_handler = AcaRedshiftBackupLambda()
+                  
+                  # Create snapshot
+                  snapshot_id = backup_handler.create_manual_snapshot(cluster_identifier, target_account_id)
+                  
+                  # Share the snapshot immediately (async operation)
+                  shared = backup_handler.share_snapshot_with_account(snapshot_id, target_account_id)
+                  
+                  # Clean up old snapshots
+                  deleted_count = backup_handler.cleanup_old_snapshots(cluster_identifier, retention_days)
+                  
+                  result = {
+                      'statusCode': 200,
+                      'snapshot_id': snapshot_id,
+                      'cluster_identifier': cluster_identifier,
+                      'target_account_id': target_account_id,
+                      'timestamp': datetime.now().isoformat(),
+                      'shared': shared,
+                      'cleaned_up_snapshots': deleted_count,
+                      'status': 'completed'
+                  }
+                  
+                  logger.info(f"Lambda completed successfully: {json.dumps(result)}")
+                  return result
+                  
+              except Exception as e:
+                  logger.error(f"Lambda execution failed: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'error': str(e),
+                      'timestamp': datetime.now().isoformat()
+                  }
+      Tags:
+        - Key: Purpose
+          Value: AcaRedshiftBackup
+        - Key: Environment
+          Value: Production
+
+  # EventBridge Rule for Scheduling
+  AcaBackupScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aca-redshift-backup-schedule
+      Description: Schedule for ACA Redshift backups
+      ScheduleExpression: !Ref BackupSchedule
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AcaRedshiftBackupLambda.Arn
+          Id: AcaRedshiftBackupTarget
+          Input: !Sub |
+            {
+              "cluster_identifier": "${ClusterIdentifier}",
+              "target_account_id": "${TargetAccountId}",
+              "retention_days": ${RetentionDays}
+            }
+
+  # Permission for EventBridge to invoke Lambda
+  AcaLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AcaRedshiftBackupLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AcaBackupScheduleRule.Arn
+
+  # CloudWatch Log Group
+  AcaLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AcaRedshiftBackupLambda}'
+      RetentionInDays: 14
+
+  # SNS Topic for Notifications (Optional)
+  AcaBackupNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: aca-redshift-backup-notifications
+      DisplayName: ACA Redshift Backup Notifications
+
+  # Email Subscription (Optional)
+  AcaEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasNotificationEmail
+    Properties:
+      TopicArn: !Ref AcaBackupNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # CloudWatch Alarm for Lambda Errors
+  AcaLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: aca-redshift-backup-lambda-errors
+      AlarmDescription: Alert when ACA Redshift backup Lambda function fails
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AcaRedshiftBackupLambda
+      AlarmActions:
+        - !Ref AcaBackupNotificationTopic
+
+Outputs:
+  LambdaFunctionName:
+    Description: ACA Redshift backup Lambda function name
+    Value: !Ref AcaRedshiftBackupLambda
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionName'
+  
+  LambdaFunctionArn:
+    Description: ACA Redshift backup Lambda function ARN
+    Value: !GetAtt AcaRedshiftBackupLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
+  
+  ScheduleRuleName:
+    Description: EventBridge schedule rule name
+    Value: !Ref AcaBackupScheduleRule
+    Export:
+      Name: !Sub '${AWS::StackName}-ScheduleRuleName'
+  
+  NotificationTopicArn:
+    Description: SNS topic for backup notifications
+    Value: !Ref AcaBackupNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-NotificationTopicArn'
+  
+  LogGroupName:
+    Description: CloudWatch log group for Lambda function
+    Value: !Ref AcaLambdaLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroupName'
