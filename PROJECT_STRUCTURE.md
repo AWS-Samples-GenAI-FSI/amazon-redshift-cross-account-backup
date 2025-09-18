@@ -16,6 +16,7 @@ aca-redshift-backup-demo/
 ├── docs/                            # Documentation
 │   ├── setup-guide.md               # Complete setup instructions
 │   ├── comparison-analysis.md        # Feature and cost comparison
+│   ├── technical-faq.md             # Technical FAQ and troubleshooting
 │   └── lambda-automation-guide.md    # Lambda solution deep dive
 ├── lambda/                          # Lambda function code
 │   └── aca_redshift_backup_lambda.py # Serverless backup automation
@@ -164,6 +165,11 @@ aca-redshift-backup-demo/
 - **Purpose**: Comprehensive comparison of all three approaches
 - **Sections**: Cost analysis, feature comparison, recommendations, decision matrix
 - **Audience**: Decision makers and architects
+
+#### `docs/technical-faq.md`
+- **Purpose**: Technical FAQ addressing common implementation questions
+- **Sections**: Storage architecture, cross-account mechanisms, troubleshooting, best practices
+- **Audience**: Technical implementers and DevOps engineers
 
 #### `docs/lambda-automation-guide.md`
 - **Purpose**: Deep technical guide for Lambda solution

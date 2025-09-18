@@ -22,6 +22,7 @@ This AWS sample demonstrates three approaches for implementing cross-account Ama
 ### Documentation
 - Detailed setup guides and troubleshooting
 - Cost analysis and feature comparison
+- Technical FAQ for common questions
 - Best practices and security considerations
 
 ## Quick Start Options
@@ -120,6 +121,8 @@ This solution supports Financial Services regulatory requirements for:
 - **Cost Optimization**: Multiple approaches to balance cost and features
 
 📋 **For detailed architecture diagrams of all three approaches, see [Architecture Diagrams](docs/architecture-diagrams.md)**
+
+❓ **For technical questions and troubleshooting, see [Technical FAQ](docs/technical-faq.md)**
 
 
 
