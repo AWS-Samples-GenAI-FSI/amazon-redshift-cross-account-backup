@@ -74,6 +74,9 @@ echo "=== Step 2: Deleting manual snapshots ==="
 
 # First, revoke cross-account access for shared snapshots
 echo "Revoking cross-account access for shared snapshots..."
+TARGET_ACCOUNT=$(get_target_account_id)
+echo "Target account ID: $TARGET_ACCOUNT"
+
 SHARED_SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
     --snapshot-type manual \
     --query 'Snapshots[?starts_with(SnapshotIdentifier, `demo-snapshot`) || starts_with(SnapshotIdentifier, `copied-`)].SnapshotIdentifier' \
@@ -84,12 +87,10 @@ SHARED_SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
 for snapshot in $SHARED_SNAPSHOTS; do
     if [[ -n "$snapshot" && "$snapshot" != "None" ]]; then
         echo "Revoking cross-account access for snapshot: $snapshot"
-        # Get target account ID dynamically
-        local target_account=$(get_target_account_id)
         # Try to revoke access - this might fail if not shared, which is OK
         aws redshift revoke-snapshot-access \
             --snapshot-identifier "$snapshot" \
-            --account-with-restore-access "$target_account" \
+            --account-with-restore-access "$TARGET_ACCOUNT" \
             --region us-east-1 \
             --profile source 2>/dev/null || echo "  (No cross-account access to revoke or already revoked)"
     fi
@@ -117,6 +118,21 @@ done
 
 # Note: We don't need to delete from target account since shared snapshots are owned by source
 echo "Note: Shared snapshots are owned by source account and deleted above"
+
+# Verify snapshots are deleted
+echo "Verifying snapshot deletion..."
+REMAINING_SNAPSHOTS=$(aws redshift describe-cluster-snapshots \
+    --snapshot-type manual \
+    --query 'Snapshots[?starts_with(SnapshotIdentifier, `demo-snapshot`)].SnapshotIdentifier' \
+    --output text \
+    --region us-east-1 \
+    --profile source 2>/dev/null || echo "")
+
+if [[ -n "$REMAINING_SNAPSHOTS" && "$REMAINING_SNAPSHOTS" != "None" ]]; then
+    echo "⚠️  Warning: Some snapshots may still exist: $REMAINING_SNAPSHOTS"
+else
+    echo "✅ All demo snapshots successfully deleted"
+fi
 
 # Step 3: Clean up AWS Backup resources (order matters!)
 echo "=== Step 3: Cleaning up AWS Backup resources ==="
