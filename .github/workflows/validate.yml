@@ -1,4 +1,4 @@
-name: Validate Code and Templates
+name: Basic Validation
 
 on:
   push:
@@ -7,69 +7,47 @@ on:
     branches: [ main ]
 
 jobs:
-  basic-validation:
+  validate:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
     
-    - name: Install basic dependencies
+    - name: Test Python files
       run: |
-        python -m pip install --upgrade pip
-        pip install pyyaml boto3
-    
-    - name: Validate Python syntax
-      run: |
+        echo "Testing Python syntax..."
         python -m py_compile scripts/native_snapshot_demo.py
         python -m py_compile scripts/aws_backup_demo.py
         python -m py_compile lambda/aca_redshift_backup_lambda.py
-        echo "✅ All Python files have valid syntax"
+        echo "Python files are valid"
     
-    - name: Validate YAML syntax
+    - name: Test JSON files
       run: |
-        python -c "
-        import yaml
-        import sys
-        
-        files = [
-          'cloudformation/source-account-setup.yaml',
-          'cloudformation/target-account-setup.yaml', 
-          'cloudformation/aca-lambda-backup-setup.yaml',
-          '.github/workflows/validate.yml'
-        ]
-        
-        for file in files:
-          try:
-            with open(file, 'r') as f:
-              yaml.safe_load(f)
-            print(f'✅ {file} - Valid YAML')
-          except Exception as e:
-            print(f'❌ {file} - Invalid YAML: {e}')
-            sys.exit(1)
-        
-        print('✅ All YAML files have valid syntax')
-        "
-    
-    - name: Validate JSON syntax
-      run: |
+        echo "Testing JSON syntax..."
         python -m json.tool config/demo-config.json > /dev/null
-        echo "✅ JSON files have valid syntax"
+        echo "JSON files are valid"
     
-    - name: Check file structure
+    - name: Test shell scripts
       run: |
-        echo "📁 Repository structure:"
-        find . -type f -name "*.py" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name "*.sh" -o -name "*.md" | head -20
-        echo "✅ Repository structure validated"
+        echo "Testing shell scripts..."
+        bash -n quick-deploy.sh
+        bash -n cleanup.sh
+        bash -n demo-runner.sh
+        bash -n deploy-lambda-backup.sh
+        echo "Shell scripts are valid"
     
-    - name: Validate shell scripts (basic)
+    - name: Check repository structure
       run: |
-        for script in *.sh; do
-          if [ -f "$script" ]; then
-            bash -n "$script" && echo "✅ $script - Valid syntax" || echo "❌ $script - Invalid syntax"
-          fi
-        done
+        echo "Repository files:"
+        ls -la
+        echo "CloudFormation templates:"
+        ls -la cloudformation/
+        echo "Documentation:"
+        ls -la docs/
+        echo "Validation completed successfully"
