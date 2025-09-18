@@ -12,6 +12,8 @@ echo
 # Check if Streamlit is installed
 if ! command -v streamlit &> /dev/null; then
     echo "📦 Installing Streamlit requirements..."
+    echo "   Fixing numpy compatibility for Apple Silicon..."
+    
     pip install -r requirements-streamlit.txt
 fi
 
