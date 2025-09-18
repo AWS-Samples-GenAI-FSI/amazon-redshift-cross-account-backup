@@ -1,0 +1,10 @@
+# Streamlit App Requirements
+streamlit>=1.28.0
+boto3>=1.26.0
+botocore>=1.29.0
+pandas>=1.5.0
+python-dateutil>=2.8.0
+
+# Optional for enhanced features
+plotly>=5.0.0
+altair>=4.0.0

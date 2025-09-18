@@ -26,7 +26,14 @@ This AWS sample demonstrates three approaches for implementing cross-account Ama
 
 ## Quick Start Options
 
-### Option 1: Full Demo Environment
+### Option 1: Streamlit Web Interface 🌟 **NEW**
+```bash
+./run-streamlit.sh         # Launch interactive web interface
+# Access at http://localhost:8501
+# Complete GUI for all operations
+```
+
+### Option 2: Full Demo Environment (Terminal)
 ```bash
 ./quick-deploy.sh          # Deploy infrastructure
 python3 scripts/native_snapshot_demo.py    # Test native approach
@@ -34,14 +41,14 @@ python3 scripts/aws_backup_demo.py         # Test AWS Backup
 ./cleanup.sh               # Clean up resources
 ```
 
-### Option 2: Lambda-Based Production Solution (Recommended)
+### Option 3: Lambda-Based Production Solution (Recommended)
 ```bash
 ./quick-deploy.sh          # Deploy infrastructure
 ./deploy-lambda-backup.sh  # Deploy serverless automation
 # Automated backups now running on schedule
 ```
 
-### Option 3: AWS Backup Solution
+### Option 4: AWS Backup Solution
 ```bash
 ./quick-deploy.sh          # Deploy infrastructure (includes AWS Backup)
 # Automated backups running via AWS Backup service
@@ -121,8 +128,37 @@ This solution supports Financial Services regulatory requirements for:
 
 📋 **For detailed architecture diagrams of all three approaches, see [Architecture Diagrams](docs/architecture-diagrams.md)**
 
+## 🖥️ Streamlit Web Interface
+
+This solution includes a comprehensive **Streamlit web application** that provides a user-friendly interface for all operations:
+
+### Features:
+- **🏠 Overview Dashboard** - Architecture diagrams, cost comparison, and configuration summary
+- **⚙️ Configuration Management** - Update settings through web forms
+- **🚀 One-Click Deployment** - Deploy infrastructure with guided wizards
+- **📊 Interactive Demos** - Run native and AWS Backup demos with real-time progress
+- **🤖 Lambda Automation** - Deploy and configure serverless automation
+- **📈 Monitoring Dashboard** - View infrastructure status and backup history
+- **🧹 Guided Cleanup** - Safe resource cleanup with confirmation steps
+
+### Quick Start:
+```bash
+# Install and launch Streamlit interface
+./run-streamlit.sh
+
+# Access at http://localhost:8501
+# No terminal commands required!
+```
+
+The Streamlit interface is perfect for:
+- **Demonstrations** to customers and stakeholders
+- **Non-technical users** who prefer GUI over command line
+- **Interactive testing** and experimentation
+- **Training and education** purposes
+
 ## Key Features
 
+- ✅ **Interactive Web Interface** - Streamlit-based GUI for all operations (no terminal required)
 - ✅ **FSI-Compliant Architecture** - Designed for financial services regulatory requirements
 - ✅ **Multiple Implementation Options** - Choose the approach that fits your needs
 - ✅ **Production-Ready** - Includes monitoring, alerting, and automated cleanup
