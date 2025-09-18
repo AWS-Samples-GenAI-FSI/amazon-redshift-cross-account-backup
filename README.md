@@ -49,20 +49,77 @@ python3 scripts/aws_backup_demo.py         # Test AWS Backup
 
 ## Architecture Overview
 
+### High-Level Architecture
+
+```mermaid
+graph TB
+    subgraph "Production Account"
+        subgraph "VPC (10.0.0.0/16)"
+            RC[Amazon Redshift Cluster<br/>Production Data]
+        end
+        
+        subgraph "Backup Automation"
+            LF[AWS Lambda Function<br/>Serverless Automation]
+            EB[EventBridge<br/>Scheduling]
+            BV1[AWS Backup Vault<br/>Primary Backups]
+        end
+        
+        KMS1[KMS Customer Key<br/>Encryption]
+        SNS[SNS Notifications<br/>Alerts]
+    end
+    
+    subgraph "Disaster Recovery Account"
+        subgraph "VPC (10.1.0.0/16)"
+            RSG[Subnet Groups<br/>Network Config]
+            RRC[Restored Clusters<br/>On-Demand]
+        end
+        
+        BV2[AWS Backup Vault<br/>Cross-Account Copies]
+        KMS2[KMS Customer Key<br/>Encryption]
+    end
+    
+    subgraph "Three Approaches"
+        A1[1. Manual Scripts<br/>Testing & Development]
+        A2[2. Lambda Automation<br/>Production Recommended]
+        A3[3. AWS Backup<br/>Enterprise Features]
+    end
+    
+    EB --> LF
+    LF --> RC
+    RC --> BV1
+    BV1 -.->|Cross-Account| BV2
+    BV2 --> RRC
+    RSG --> RRC
+    
+    RC --> A1
+    RC --> A2
+    RC --> A3
+    
+    KMS1 -.->|Cross-Account Access| KMS2
+    LF --> SNS
+    
+    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef recommended fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
+    
+    class RC,BV1,BV2,KMS1,KMS2,RSG,RRC,SNS aws
+    class LF,EB,A2 recommended
 ```
-Production Account                     Disaster Recovery Account
-├── Amazon Redshift Cluster          ├── Networking (VPC, Subnets)
-├── AWS Lambda Function (optional)    ├── AWS Backup Vault
-├── AWS Backup Vault                  └── Restored Clusters (on-demand)
-├── Amazon EventBridge Scheduling     
-└── Amazon SNS Notifications          
-```
+
+### Key Components
+
+- **Production Account**: Contains the live Amazon Redshift cluster and backup automation
+- **DR Account**: Isolated environment for disaster recovery with cross-account access
+- **Three Approaches**: Choose based on your operational requirements and compliance needs
+- **Encryption**: End-to-end encryption using AWS KMS customer-managed keys
+- **Automation**: Serverless scheduling with AWS Lambda and EventBridge (recommended)
 
 This solution supports Financial Services regulatory requirements for:
 - **Data Residency**: Cross-account isolation with controlled access
 - **Disaster Recovery**: Automated backup and restoration capabilities  
 - **Compliance**: Comprehensive audit trails and encryption
 - **Cost Optimization**: Multiple approaches to balance cost and features
+
+📋 **For detailed architecture diagrams of all three approaches, see [Architecture Diagrams](docs/architecture-diagrams.md)**
 
 ## Key Features
 

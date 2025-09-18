@@ -8,44 +8,52 @@ The Lambda automation provides production-ready backup scheduling with minimal o
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Source Account (164543933824)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────────┐ │
-│  │ EventBridge     │───▶│ Lambda Function  │───▶│ ACA Redshift Cluster    │ │
-│  │ Schedule Rule   │    │ aca-redshift-    │    │ aca-redshift-cluster    │ │
-│  │                 │    │ backup           │    │                         │ │
-│  └─────────────────┘    └──────────────────┘    └─────────────────────────┘ │
-│           │                       │                         │               │
-│           │                       ▼                         ▼               │
-│           │              ┌─────────────────┐    ┌─────────────────────────┐ │
-│           │              │ CloudWatch      │    │ Manual Snapshots        │ │
-│           │              │ Logs & Metrics  │    │ aca-lambda-snapshot-*   │ │
-│           │              └─────────────────┘    └─────────────────────────┘ │
-│           │                       │                         │               │
-│           │                       ▼                         │               │
-│           │              ┌─────────────────┐                │               │
-│           └─────────────▶│ SNS Topic       │                │               │
-│                          │ Notifications   │                │               │
-│                          └─────────────────┘                │               │
-└─────────────────────────────────────────────────────────────┼───────────────┘
-                                                               │
-                                                               ▼
-┌─────────────────────────────────────────────────────────────┼───────────────┐
-│                           Target Account (058264155998)     │               │
-├─────────────────────────────────────────────────────────────┼───────────────┤
-│                                                             │               │
-│  ┌─────────────────────────┐    ┌─────────────────────────┐ │               │
-│  │ Shared Snapshots        │◀───┤ Cross-Account Access    │◀┘               │
-│  │ Available for Restore   │    │ KMS Permissions         │                 │
-│  └─────────────────────────┘    └─────────────────────────┘                 │
-│                                                                             │
-│  ┌─────────────────────────┐                                                │
-│  │ Restored Clusters       │                                                │
-│  │ (On-Demand)             │                                                │
-│  └─────────────────────────┘                                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Production Account"
+        subgraph "Serverless Automation"
+            EB[Amazon EventBridge<br/>Schedule Rule]
+            LF[AWS Lambda Function<br/>aca-redshift-backup]
+            CW[CloudWatch<br/>Logs & Metrics]
+            SNS[Amazon SNS<br/>Notifications]
+        end
+        
+        subgraph "VPC"
+            RC[Amazon Redshift Cluster<br/>aca-redshift-cluster]
+        end
+        
+        AS[Automated Snapshots<br/>aca-lambda-snapshot-*]
+        KMS1[KMS Customer Key]
+        
+        EB -->|Scheduled Trigger| LF
+        LF --> RC
+        LF --> CW
+        LF --> SNS
+        RC --> AS
+        KMS1 --> RC
+    end
+    
+    subgraph "Disaster Recovery Account"
+        subgraph "VPC"
+            RSG[Subnet Groups]
+            RRC[Restored Clusters<br/>On-Demand]
+        end
+        
+        SS[Shared Snapshots<br/>Cross-Account Access]
+        KMS2[KMS Customer Key]
+        
+        RSG --> RRC
+        KMS2 --> RRC
+    end
+    
+    AS -.->|Auto-Share| SS
+    SS --> RRC
+    
+    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef serverless fill:#9C27B0,stroke:#4A148C,stroke-width:2px,color:#fff
+    
+    class RC,AS,RSG,RRC,KMS1,KMS2,SS aws
+    class EB,LF,CW,SNS serverless
 ```
 
 ## Key Components
