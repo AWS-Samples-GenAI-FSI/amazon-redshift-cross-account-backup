@@ -173,7 +173,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for information on how to contribute to t
 
 ## License
 
-This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file for details.
+This library is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 
 ## Support
 
